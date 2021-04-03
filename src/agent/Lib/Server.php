@@ -1,16 +1,10 @@
 <?php
-/**
- * Created by PhpStorm.
- * User: liuzhiming
- * Date: 2017/7/10
- * Time: 23:39
- */
+
 
 namespace Lib;
 
-use Lib;
 
-class Server
+abstract class Server implements ServerInterface
 {
     protected static $options = array();
     protected static $beforeStopCallback;
@@ -35,29 +29,24 @@ class Server
 
     public $configFromDefault = [];
 
-
-    /**
-     * @param callable $function
-     */
-    static function beforeStop(callable $function)
+    public function getConfig()
     {
-        self::$beforeStopCallback = $function;
+        $host = "127.0.0.1";
+        $port = 8901;
+        if (isset($this->configFromDefault["host"])){
+            $host = $this->configFromDefault["host"];
+        }
+
+        if (isset($this->configFromDefault["port"])){
+            $port = $this->configFromDefault["port"];
+        }
+        return ["host"=>$host,"port"=>$port];
     }
-
-    /**
-     * @param callable $function
-     */
-    static function beforeReload(callable $function)
-    {
-        self::$beforeReloadCallback = $function;
-    }
-
-
 
     /**
      * 显示命令行指令
      */
-    static function start($startFunction)
+    static public function start($startFunction)
     {
         if (!self::$optionKit) {
             Loader::addNameSpace('GetOptionKit', WEBPATH."/Lib/GetOptionKit/src/GetOptionKit");
@@ -84,13 +73,14 @@ class Server
     }
 
     /**
-     * 自动创建对象
-     * @return Server
+     * 设置进程名称
+     * @param $name
      */
-    static function autoCreate()
+    function setProcessName($name)
     {
-        return new self();
+        $this->processName = $name;
     }
+
     protected static function setProcessTitle($title)
     {
         // >=php 5.5
@@ -102,43 +92,33 @@ class Server
         }
     }
 
-    function run($setting)
+    function setServer($server)
     {
-        if (!empty(self::$options['daemon'])) {
-            \swoole_process::daemon(true,false);
-        }
-        if (!empty($this->processName)){
-            self::setProcessTitle($this->processName);
-        }
-        $this->sw = new \swoole_client(SWOOLE_SOCK_TCP,SWOOLE_SOCK_ASYNC);
-        $this->sw->on("Connect",[$this,"_onConnect"]);
-        $this->sw->on("Error",[$this,"_onError"]);
-        $this->sw->on("Receive",[$this,"_onReceive"]);
-        $this->sw->on("Close",[$this,"_onClose"]);
-        $this->sw->set($setting);
-        $this->_onWorkStart();
+        $this->server = $server;
+        $server::$client = $this;
     }
-    public function _onWorkStart()
+
+    public function onWorkStart()
     {
         if (is_callable([$this->server,'onWorkStart'])){
             call_user_func([$this->server,'onWorkStart']);
         }
     }
-    public function _onConnect($client)
+    public function onConnect($client)
     {
         if (is_callable([$this->server,'onConnect'])){
             call_user_func([$this->server,'onConnect'], $client);
         }
     }
 
-    public function _onError($client)
+    public function onError($client)
     {
         if (is_callable([$this->server,'onError'])){
             call_user_func([$this->server,'onError'], $client);
         }
     }
 
-    public function _onReceive($client, $data)
+    public function onReceive($client, $data)
     {
         if (is_callable([$this->server,'onReceive'])){
             if (!is_callable(["\\Lib\\SOAProtocol",'decode'])){
@@ -148,40 +128,18 @@ class Server
             call_user_func([$this->server,'onReceive'], $client,$data);
         }
     }
-    public function _onClose($client)
+    public function onClose($client)
     {
         if (is_callable([$this->server,'onClose'])){
             call_user_func([$this->server,'onClose'], $client);
         }
     }
 
-    public function connect()
+    public function close()
     {
-        if ($this->sw->isConnected()){
-            return true;
+        if ($this->sw){
+            $this->sw->close(true);
         }
-        $config = $this->getConfig();
-        echo "connect=>host:".$config["host"]." port:".$config["port"]."\n";
-        $res = $this->sw->connect($config["host"],$config["port"],30);
-        //https://wiki.swoole.com/wiki/page/30.html 修复Agent和Center网络断开重连连接不上的问题
-        if($res === false){
-            $this->close();
-        }
-        return $res;
-    }
-
-    public function getConfig()
-    {
-        $host = "127.0.0.1";
-        $port = 8901;
-        if (isset($this->configFromDefault["host"])){
-            $host = $this->configFromDefault["host"];
-        }
-
-        if (isset($this->configFromDefault["port"])){
-            $port = $this->configFromDefault["port"];
-        }
-        return ["host"=>$host,"port"=>$port];
     }
 
     public function call()
@@ -207,29 +165,4 @@ class Server
             'message'=>socket_strerror($this->sw->errCode),
         ];
     }
-
-
-    function setServer($server)
-    {
-        $this->server = $server;
-        $server::$client = $this;
-    }
-
-    /**
-     * 设置进程名称
-     * @param $name
-     */
-    function setProcessName($name)
-    {
-        $this->processName = $name;
-    }
-
-
-    public function close()
-    {
-        if ($this->sw){
-            $this->sw->close(true);
-        }
-    }
-
 }

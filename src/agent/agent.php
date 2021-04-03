@@ -27,8 +27,7 @@ if (empty($env) || $env == "product") {
 
 define('ENV_NAME', $env);
 
-Lib\Server::start(function ($opt)
-{
+$startFunction = function ($opt) {
     $AppSvr = new Lib\Agent;
     $setting = array(
         'open_length_check' => 1,
@@ -38,7 +37,16 @@ Lib\Server::start(function ($opt)
         'package_length_offset' => 0
     );
 
-    $server = Lib\Server::autoCreate();
+    /**
+     * @var \Lib\Server
+     */
+    $server = null;
+    if (class_exists( \Swoole\Async\Client::class)) {
+        $server = Lib\AsyncServer::autoCreate();
+    } else {
+        $server = Lib\CoroutineServer::autoCreate();
+    }
+
     if (isset($opt["host"])){
         $server->configFromDefault["host"] = $opt["host"];
     }
@@ -48,4 +56,14 @@ Lib\Server::start(function ($opt)
     $server->setServer($AppSvr);
     $server->setProcessName("AgentServer");
     $server->run($setting);
-});
+};
+
+/**
+ * @var \Lib\Server
+ */
+$server = null;
+if (class_exists( \Swoole\Async\Client::class)) {
+    Lib\AsyncServer::start($startFunction);
+} else {
+    Lib\CoroutineServer::start($startFunction);
+}

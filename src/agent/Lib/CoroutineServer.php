@@ -1,0 +1,73 @@
+<?php
+
+
+namespace Lib;
+
+
+use mysql_xdevapi\Exception;
+
+class CoroutineServer extends Server
+{
+
+    /**
+     * 自动创建对象
+     * @return CoroutineServer
+     */
+    static public function autoCreate()
+    {
+        return new self();
+    }
+
+    public function run($opt)
+    {
+        \Swoole\Runtime::enableCoroutine($flags = SWOOLE_HOOK_ALL);
+        $this->sw = new \Swoole\Client(SWOOLE_SOCK_TCP);
+        if (!$this->sw->connect($this->configFromDefault['host'], $this->configFromDefault['port'], 30)) {
+            $this->onError($this->sw);
+            return 0;
+        }
+        $this->onWorkStart();
+        if ($this->sw->isConnected()) {
+            $this->onConnect($this->server);
+        } else {
+            $this->onError($this->sw);
+            return 0;
+        }
+        try {
+            while (true) {
+                $data = $this->sw->recv();
+                if (strlen($data) > 0) {
+                    $this->onReceive($this->sw, $data);
+                } else {
+                    $this->close();
+                    $this->onClose($this->sw);
+                    \Co::sleep(2);
+                }
+            }
+        } catch (\Exception $e) {
+            echo $e->getMessage();
+        }
+
+        // 不会执行到这里
+        echo "Exited!";
+    }
+
+    public function connect()
+    {
+        if ($this->sw->isConnected()){
+            return true;
+        }
+        $config = $this->getConfig();
+        echo "connect=>host:".$config["host"]." port:".$config["port"]."\n";
+        $res = $this->sw->connect($config["host"],$config["port"],30);
+        //https://wiki.swoole.com/wiki/page/30.html 修复Agent和Center网络断开重连连接不上的问题
+        if($res === false){
+            $this->close();
+            $this->onError($this->sw);
+            return $res;
+        }
+
+        $this->onConnect($this->sw);
+        return $res;
+    }
+}
