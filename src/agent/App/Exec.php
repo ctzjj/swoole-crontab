@@ -17,6 +17,9 @@ class Exec
      */
     public static function run($task)
     {
+        if (\Swoole\Coroutine::getCid() !== -1) {
+            return Lib\Process::create_coroutine($task);
+        }
         return Lib\Process::create_process($task);
     }
 }

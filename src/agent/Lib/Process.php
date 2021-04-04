@@ -31,6 +31,16 @@ class Process
      */
     public static function signal()
     {
+        if (\Swoole\Coroutine::getCid() !== -1) {
+            return self::coSignalRegister();
+        }
+        return self::signalRegister();
+    }
+
+    /**
+     * 异步版信号监听
+     */
+    private static function signalRegister() {
         \swoole_process::signal(SIGCHLD, function ($sig) {
             //必须为false，非阻塞模式
             while ($ret = \swoole_process::wait(false)) {
@@ -49,6 +59,37 @@ class Process
                 }
             }
         });
+        return true;
+    }
+
+    /**
+     * 协程版信号监听
+     */
+    private static function coSignalRegister() {
+        // 这里用的不是fork，所以主进程没有信号，使用定时器进行监听
+        \Swoole\Timer::tick(80, function(){
+            // 轮询效率较低，先用吧，后面改成事件驱动
+            foreach (self::$process_list as $pid => $proc) {
+                $info = proc_get_status($proc);
+                if ($info['running']) {
+                    continue;
+                }
+                $task = self::$task_list[$pid];
+                self::$task_list[$pid]["status"] = self::PROCESS_STOP;
+                self::$task_list[$pid]["end"] = microtime(true);
+                self::$task_list[$pid]["code"] = $info["exitcode"];
+                self::log($task["runid"], $task["taskId"], "进程运行完成,输出值",
+                    isset(self::$process_stdout[$pid]) ? self::$process_stdout[$pid] : "");
+                \Swoole\Event::del($task['pipe'][1]);
+//                fclose($task['pipe'][0]);
+//                fclose($task['pipe'][1]);
+//                proc_close(self::$process_list[$pid]);
+                unset(self::$process_list[$pid]);
+                unset(self::$process_stdout[$pid]);
+            }
+
+        });
+        return true;
     }
 
     /**
@@ -180,6 +221,56 @@ class Process
             exit(101);
         }
         $worker->exec($execfile, $exec);
+    }
+
+    /**
+     * @todo 修改运行时用户暂时为实现
+     * @param $task
+     * @return bool
+     */
+    static public function create_coroutine($task) {
+        self::log($task["runid"], $task["id"], "协程开始执行", $task);
+        $exec = $task["execute"];
+        $descriptorspec = array(
+            0 => array("pipe", "r"), //stdin (用fwrite写入数据给管道)
+            1 => array("pipe", "w"), //stdout(用stream_get_contents获取管道输出)
+            // 2 => array("file", "/tmp/error-output.txt", "a")  //stderr(写入到文件)
+        );
+        $pipes = null;
+        echo $task['taskname'] . "\n";
+        // 如果想要退出agent后，任务继续执行，就在命令后加&, 进程会脱离父进程被pid1接管
+        $proc = proc_open($exec, $descriptorspec, $pipes);
+        if(is_resource($proc)) {
+            $info = proc_get_status($proc);
+            \Swoole\Event::add($pipes[1], function($fd) use($proc) {
+                $info = proc_get_status($proc);
+                if (!isset(self::$process_stdout[$info['pid']])) {
+                    self::$process_stdout[$info['pid']] = "";
+                }
+                $tmp = stream_get_contents($fd);
+                $len = strlen(self::$process_stdout[$info['pid']]);
+                if ($len + strlen($tmp) <= self::$max_stdout) {
+                    self::$process_stdout[$info['pid']] .= $tmp;
+                }
+                // 在信号注册那边做
+                //\Swoole\Event::del($fd);
+            });
+            self::log($task["runid"], $task["id"], "进程开始执行", $task);
+            self::$task_list[$info['pid']] = [
+                "taskId" => $task["id"],
+                "runid" => $task["runid"],
+                "timeout" => $task["timeout"],
+                "status" => self::PROCESS_START,
+                "start" => microtime(true),
+                "pipe" => $pipes
+            ];
+            self::$process_list[$info['pid']] = $proc;
+            return true;
+        } else {
+            self::log($task["runid"], $task["id"], "创建子进程失败", $task);
+        }
+
+        return true;
     }
 
     /**

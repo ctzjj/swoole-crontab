@@ -20,33 +20,41 @@ class CoroutineServer extends Server
 
     public function run($opt)
     {
+        if (!empty(self::$options['daemon'])) {
+            \swoole_process::daemon(true,false);
+        }
+        if (!empty($this->processName)){
+            self::setProcessTitle($this->processName);
+        }
         \Swoole\Runtime::enableCoroutine($flags = SWOOLE_HOOK_ALL);
-        $this->sw = new \Swoole\Client(SWOOLE_SOCK_TCP);
-        if (!$this->sw->connect($this->configFromDefault['host'], $this->configFromDefault['port'], 30)) {
-            $this->onError($this->sw);
-            return 0;
-        }
-        $this->onWorkStart();
-        if ($this->sw->isConnected()) {
-            $this->onConnect($this->server);
-        } else {
-            $this->onError($this->sw);
-            return 0;
-        }
-        try {
-            while (true) {
-                $data = $this->sw->recv();
-                if (strlen($data) > 0) {
-                    $this->onReceive($this->sw, $data);
-                } else {
-                    $this->close();
-                    $this->onClose($this->sw);
-                    \Co::sleep(2);
-                }
+        \Co\run(function() {
+            $this->sw = new \Swoole\Coroutine\Client(SWOOLE_SOCK_TCP);
+            if (!$this->sw->connect($this->configFromDefault['host'], $this->configFromDefault['port'], 30)) {
+                $this->onError($this->sw);
+                return 0;
             }
-        } catch (\Exception $e) {
-            echo $e->getMessage();
-        }
+            $this->onWorkStart();
+            if ($this->sw->isConnected()) {
+                $this->onConnect($this->server);
+            } else {
+                $this->onError($this->sw);
+                return 0;
+            }
+            try {
+                while (true) {
+                    $data = $this->sw->recv();
+                    if (strlen($data) > 0) {
+                        $this->onReceive($this->sw, $data);
+                    } else {
+                        $this->onError($this->sw);
+                        sleep(2);
+                    }
+                }
+            } catch (\Exception $e) {
+                echo $e->getMessage();
+            }
+        });
+
 
         // 不会执行到这里
         echo "Exited!";
