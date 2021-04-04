@@ -46,6 +46,7 @@ class CoroutineServer extends Server
                 while (true) {
                     $data = $this->sw->recv(-1);
                     if (strlen($data) > 0) {
+                        self::$errorTimes = 0;
                         $this->onReceive($this->sw, $data);
                     } else {
                         $this->onError($this->sw);
