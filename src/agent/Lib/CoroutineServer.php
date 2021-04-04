@@ -9,6 +9,8 @@ use mysql_xdevapi\Exception;
 class CoroutineServer extends Server
 {
 
+    private static $errorTimes = 0;
+
     /**
      * 自动创建对象
      * @return CoroutineServer
@@ -29,7 +31,7 @@ class CoroutineServer extends Server
         \Swoole\Runtime::enableCoroutine($flags = SWOOLE_HOOK_ALL);
         \Co\run(function() {
             $this->sw = new \Swoole\Coroutine\Client(SWOOLE_SOCK_TCP);
-            if (!$this->sw->connect($this->configFromDefault['host'], $this->configFromDefault['port'], 30)) {
+            if (!$this->sw->connect($this->configFromDefault['host'], $this->configFromDefault['port'], 80)) {
                 $this->onError($this->sw);
                 return 0;
             }
@@ -42,11 +44,18 @@ class CoroutineServer extends Server
             }
             try {
                 while (true) {
-                    $data = $this->sw->recv();
+                    $data = $this->sw->recv(-1);
                     if (strlen($data) > 0) {
                         $this->onReceive($this->sw, $data);
                     } else {
                         $this->onError($this->sw);
+                        self::$errorTimes++;
+                        // 失败30次尝试重新连接
+                        if (self::$errorTimes >= 30) {
+                            echo '错误次数过多，尝试重新连接！';
+                            $this->sw->close(true);
+                            $this->connect();
+                        }
                         sleep(2);
                     }
                 }
@@ -62,12 +71,13 @@ class CoroutineServer extends Server
 
     public function connect()
     {
+        self::$errorTimes = 0;
         if ($this->sw->isConnected()){
             return true;
         }
         $config = $this->getConfig();
         echo "connect=>host:".$config["host"]." port:".$config["port"]."\n";
-        $res = $this->sw->connect($config["host"],$config["port"],30);
+        $res = $this->sw->connect($config["host"],$config["port"],80);
         //https://wiki.swoole.com/wiki/page/30.html 修复Agent和Center网络断开重连连接不上的问题
         if($res === false){
             $this->close();
