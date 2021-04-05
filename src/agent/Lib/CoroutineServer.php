@@ -54,7 +54,7 @@ class CoroutineServer extends Server
                         // 失败30次尝试重新连接
                         if (self::$errorTimes >= 30) {
                             echo '错误次数过多，尝试重新连接！';
-                            $this->sw->close(true);
+                            $this->close();
                             $this->connect();
                         }
                         sleep(2);
@@ -78,6 +78,8 @@ class CoroutineServer extends Server
         }
         $config = $this->getConfig();
         echo "connect=>host:".$config["host"]." port:".$config["port"]."\n";
+        unset($this->sw);
+        $this->sw = new \Swoole\Coroutine\Client(SWOOLE_SOCK_TCP);
         $res = $this->sw->connect($config["host"],$config["port"],80);
         //https://wiki.swoole.com/wiki/page/30.html 修复Agent和Center网络断开重连连接不上的问题
         if($res === false){
